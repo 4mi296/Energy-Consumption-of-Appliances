@@ -1,0 +1,696 @@
+---
+title: "Project"
+author: "Murali krishna G"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r}
+library(Hmisc) 
+library(psych) 
+library(GGally) 
+library(ggplot2) 
+library(vioplot) 
+library(corrplot) 
+library(REdaS) 
+library(fmsb)
+library(factoextra) 
+library(FactoMineR) 
+library(ade4) 
+library(pracma)
+library(dplyr)
+library(readr)
+library(modeest)
+library(DescTools) 
+library(leaps) 
+library(fastDummies)
+library(dummy)
+library(caret)
+library(car)
+library(glmnet)
+library(tidyr)
+library(performance) 
+library(modelsummary)
+library(caret)
+```
+
+# Data
+```{r}
+energydata = read.csv("energydata_complete.csv", header = TRUE, sep = ",")
+```
+
+
+```{r}
+head(energydata)
+```
+```{r}
+dim(energydata)
+```
+
+```{r}
+energydata <- energydata %>% rename('temp_kitchen' = 'T1', 
+                        'temp_living' = 'T2', 
+                        'temp_laundry' = 'T3',
+                        'temp_office' = 'T4',
+                        'temp_bath' = 'T5', 
+                        'temp_outside' = 'T6',
+                        'temp_iron' ='T7', 
+                        'temp_teen' = 'T8', 
+                        'temp_parents' = 'T9', 
+                        'temp_station' = 'T_out',
+                        'humid_kitchen' = 'RH_1', 
+                        'humid_living' = 'RH_2', 
+                        'humid_laundry' = 'RH_3', 
+                        'humid_office'= 'RH_4', 
+                        'humid_bath' = 'RH_5', 
+                        'humid_outside' = 'RH_6',
+                        'humid_iron' = 'RH_7', 
+                        'humid_teen' = 'RH_8', 
+                        'humid_parents' = 'RH_9', 
+                        'humid_station' = 'RH_out',
+                        'random_1' = 'rv1',
+                        'random_2' = 'rv2')
+```
+
+```{r}
+str(energydata)
+```
+
+```{r}
+data <- energydata
+```
+
+# Data exploration
+```{r}
+energydata_boxplots <- energydata[-c(1,2,23)]
+
+boxplot(energydata_boxplots, main = 'Distribution of Each Predictor', xlab = 'Predictor', ylab = 'Values')
+```
+
+
+
+```{r}
+# List of variables with outliers
+variables_with_outliers <- c("humid_laundry", "temp_office", "temp_kitchen", "humid_living", 
+                              "humid_kitchen", "temp_outside", "humid_station", "temp_bath", 
+                              "temp_iron", "humid_iron", "temp_station", "temp_teen", "humid_teen", 
+                              "humid_parents", "Windspeed", "Tdewpoint", "temp_parents", 
+                              "temp_living", "Press_mm_hg")
+
+# Loop through each variable and remove outliers
+for (variable in variables_with_outliers) {
+  outliers <- boxplot.stats(data[[variable]])$out
+  data <- data[!data[[variable]] %in% outliers, ]
+}
+
+# Cleaned data without outliers
+cleaned_data <- data
+
+```
+
+```{r}
+names(cleaned_data)
+```
+
+
+
+```{r}
+t.test(energydata$Appliances, data$Appliances)
+```
+
+
+```{r}
+data1 <- energydata[c(-1,-28,-29)]
+head(data1)
+```
+
+
+
+
+```{r}
+energydata1 <- energydata[c(-1,-29)]
+str(energydata1)
+```
+
+```{r}
+names(energydata1)
+```
+
+```{r}
+sum(is.na(energydata1))
+```
+
+
+```{r}
+ggplot(data = data1, aes(x = (Appliances))) +
+  geom_density(fill = "pink", color = "black", bins = 30) +
+  labs( title = "Appliances  Distribution", x = "Appliances")
+```
+
+```{r}
+ggplot(data = data1, aes(x = log(Appliances))) +
+  geom_density(fill = "pink", color = "black", bins = 30) +
+  labs( title = "Log(Appliances)  Distribution", x = "Log(Appliances)")
+```
+```{r}
+data_log <-  data1 %>% mutate(Appliances = log(Appliances))
+```
+
+```{r}
+describe(data_log)
+```
+
+```{r}
+data_log %>% 
+    select_if(is.numeric) %>% 
+    pivot_longer(cols = -Appliances, names_to = 'predictor') %>% 
+    ggplot() +
+    geom_histogram(aes(x = value), bins = 15, color = 'black', fill = 'white') +
+    facet_wrap(~predictor, scales = 'free_x')  +
+    labs(
+        title = 'Density graph of each variable',
+        x = 'variable',
+        y = 'Frequency'
+    )
+```
+
+
+
+## correlation plots
+```{r}
+M <- cor(data_log)
+corrplot(M, method = "square")
+```
+```{r}
+names(data_log)
+```
+
+```{r}
+data_clean <- data_log %>% 
+  mutate( zscore = (Appliances - mean(Appliances)) / sd(Appliances)) %>%
+  filter(zscore <=3) 
+```
+
+```{r}
+dim(data_clean)
+```
+
+
+```{r}
+data_clean <- data_clean[c(-27)]
+```
+
+```{r}
+boxplot(data_log$Appliances)
+```
+
+```{r}
+boxplot(data_clean$Appliances)
+```
+
+
+# Methods
+## stepwise method
+
+```{r}
+set.seed(1729)
+
+index <- sample(nrow(data_clean), nrow(data_clean)*0.8)
+
+data_train <- data_clean[index,]
+data_validation <- data_clean[-index,]
+```
+
+```{r}
+set.seed(1729)
+control <- trainControl(method = "cv", number = 10)
+
+se_model <- train(Appliances ~ ., data = data_train, method = "lm", trControl = control)
+
+se_model
+```
+
+```{r}
+model_all <- lm(Appliances ~ ., data_train)
+```
+
+```{r}
+vif(model_all)
+```
+
+
+```{r}
+model_none <- lm(formula = Appliances ~ 1, data = data_train)
+```
+
+```{r}
+model_both <- step(
+  object = model_none, 
+  direction = "both",
+  scope = list(upper = model_all), 
+  trace = FALSE
+)
+```
+
+```{r}
+vif(model_both)
+```
+
+```{r}
+summary(model_both)
+```
+
+```{r}
+coef(model_both)
+```
+
+assumptions of linearity
+
+```{r}
+ggplot(data = as.data.frame(model_all$residuals), aes(x = model_all$residuals)) +
+  geom_histogram(fill = "#CC0000", color = "orange", bins = 30) +
+  labs( title = "Regression Residual Distribution", subtitle = "Log Transformation", x = "residual")
+```
+
+
+
+Predicted vs residuals
+```{r}
+plot( fitted(model_all), rstandard(model_all), main="Predicted vs residuals plot")
+abline(a=0, b=0, col='red')
+```
+
+Q-Q Norm plot
+```{r}
+qqnorm(rstandard(model_all))
+qqline(rstandard(model_all),col=2)
+```
+
+
+
+## Ridge
+
+```{r}
+data_ridge = cleaned_data[, !(names(cleaned_data) %in% c("date", "random_1", "random_2"))]
+```
+
+```{r}
+
+# Create the dependent variable (y)
+y <- data_ridge$Appliances
+
+# Create a matrix of independent variables (x)
+x <- as.matrix(data_ridge)
+
+# Fit the ridge regression model
+ridge_model <- cv.glmnet(x, y, alpha = 0)  # alpha = 0 for ridge regression
+
+ridge_model
+```
+
+```{r}
+# Print the coefficients
+coef(ridge_model)
+```
+
+```{r}
+# Plot the cross-validated mean squared error as a function of lambda
+plot(ridge_model)
+```
+
+```{r}
+# Predict the response using the ridge regression model
+y_pred <- predict(ridge_model, newx = x)
+
+# Calculate residuals
+residuals <- y - y_pred
+
+# Plot residuals vs. fitted values
+plot(y_pred, residuals, 
+     main = "Residuals vs. Fitted Values",
+     xlab = "Fitted Values",
+     ylab = "Residuals")
+
+# Add a horizontal line at y = 0
+abline(h = 0, col = "red")
+
+# Plot histogram of residuals
+hist(residuals, 
+     main = "Histogram of Residuals",
+     xlab = "Residuals",
+     ylab = "Frequency")
+
+```
+
+## Lasso
+```{r}
+data_lasso = cleaned_data[, !(names(cleaned_data) %in% c("date", "random_1", "random_2"))]
+head(data_lasso)
+```
+
+```{r}
+response_variable = data_lasso$Appliances
+predictors = data_lasso[, -1]  
+predictors
+```
+
+```{r}
+standardized_predictors = scale(predictors)
+```
+
+```{r}
+lasso_model = cv.glmnet(x = as.matrix(standardized_predictors), y = response_variable, alpha = 1)
+
+```
+
+```{r}
+lasso_model
+```
+
+```{r}
+# Build the LASSO model with the minimum lambda
+lasso_model_min = glmnet(x = as.matrix(standardized_predictors), y = response_variable, alpha = 1, lambda = 0.0453)
+
+# Display the model
+lasso_model_min
+
+```
+
+```{r}
+# Build the LASSO model with the 1 standard error lambda
+```
+
+```{r}
+lasso_model_1se = glmnet(x = as.matrix(standardized_predictors), y = response_variable, alpha = 1, lambda = 1.1750)
+```
+
+```{r}
+# Display the model
+lasso_model_1se
+```
+
+```{r}
+# Retrieve coefficients for the minimum lambda model
+coefficients_min = coef(lasso_model_min)
+coefficients_min
+```
+
+```{r}
+# Retrieve coefficients for the 1 standard error lambda model
+coefficients_1se = coef(lasso_model_1se)
+coefficients_1se
+```
+
+```{r}
+# Plot the LASSO paths for the 1se model
+plot(lasso_model_1se, xvar = "lambda", label = TRUE)
+abline(v = log(1.1750), col = "blue", lty = 2)  # Vertical line for 1 standard error lambda
+legend("topright", legend = "1se Lambda", col = "blue", lty = 2)
+
+# Add title and labels
+title("LASSO Paths for 1 Standard Error Lambda Model")
+xlab(xlab)
+ylab(ylab)
+```
+
+## PCA
+```{r}
+PCA_Plot = function(pcaData)
+{
+  library(ggplot2)
+  
+  theta = seq(0,2*pi,length.out = 100)
+  circle = data.frame(x = cos(theta), y = sin(theta))
+  p = ggplot(circle,aes(x,y)) + geom_path()
+  
+  loadings = data.frame(pcaData$rotation, .names = row.names(pcaData$rotation))
+  p + geom_text(data=loadings, mapping=aes(x = PC1, y = PC2, label = .names, colour = .names, fontface="bold")) +
+    coord_fixed(ratio=1) + labs(x = "PC1", y = "PC2")
+}
+
+PCA_Plot_Secondary = function(pcaData)
+{
+  library(ggplot2)
+  
+  theta = seq(0,2*pi,length.out = 100)
+  circle = data.frame(x = cos(theta), y = sin(theta))
+  p = ggplot(circle,aes(x,y)) + geom_path()
+  
+  loadings = data.frame(pcaData$rotation, .names = row.names(pcaData$rotation))
+  p + geom_text(data=loadings, mapping=aes(x = PC3, y = PC4, label = .names, colour = .names, fontface="bold")) +
+    coord_fixed(ratio=1) + labs(x = "PC3", y = "PC4")
+}
+
+PCA_Plot_Psyc = function(pcaData)
+{
+  library(ggplot2)
+  
+  theta = seq(0,2*pi,length.out = 100)
+  circle = data.frame(x = cos(theta), y = sin(theta))
+  p = ggplot(circle,aes(x,y)) + geom_path()
+  
+  loadings = as.data.frame(unclass(pcaData$loadings))
+  s = rep(0, ncol(loadings))
+  for (i in 1:ncol(loadings))
+  {
+    s[i] = 0
+    for (j in 1:nrow(loadings))
+      s[i] = s[i] + loadings[j, i]^2
+    s[i] = sqrt(s[i])
+  }
+  
+  for (i in 1:ncol(loadings))
+    loadings[, i] = loadings[, i] / s[i]
+  
+  loadings$.names = row.names(loadings)
+  
+  p + geom_text(data=loadings, mapping=aes(x = PC1, y = PC2, label = .names, colour = .names, fontface="bold")) +
+    coord_fixed(ratio=1) + labs(x = "PC1", y = "PC2")
+}
+
+PCA_Plot_Psyc_Secondary = function(pcaData)
+{
+  library(ggplot2)
+  
+  theta = seq(0,2*pi,length.out = 100)
+  circle = data.frame(x = cos(theta), y = sin(theta))
+  p = ggplot(circle,aes(x,y)) + geom_path()
+  
+  loadings = as.data.frame(unclass(pcaData$loadings))
+  s = rep(0, ncol(loadings))
+  for (i in 1:ncol(loadings))
+  {
+    s[i] = 0
+    for (j in 1:nrow(loadings))
+      s[i] = s[i] + loadings[j, i]^2
+    s[i] = sqrt(s[i])
+  }
+  
+  for (i in 1:ncol(loadings))
+    loadings[, i] = loadings[, i] / s[i]
+  
+  loadings$.names = row.names(loadings)
+  
+  print(loadings)
+  p + geom_text(data=loadings, mapping=aes(x = PC3, y = PC4, label = .names, colour = .names, fontface="bold")) +
+    coord_fixed(ratio=1) + labs(x = "PC3", y = "PC4")
+}
+```
+
+```{r}
+data_pca <- energydata[c(-1,-29)]
+```
+
+```{r}
+dim(data_pca)
+```
+
+
+Kaiser-Meyer-Olkin 
+```{r}
+KMO(data_pca)
+```
+
+Bartletts sphere test
+```{r}
+bart_spher(data_pca)
+```
+
+cronbachalpha test
+```{r}
+CronbachAlpha(data_pca)
+```
+
+
+```{r}
+comp <- fa.parallel(data_pca)
+comp
+```
+
+Create PCA
+```{r}
+p = prcomp(data_pca, center=T, scale=T)
+p
+```
+
+Check Scree Plot
+```{r}
+plot(p)
+abline(1, 0)
+
+```
+
+Check PCA Summary Information
+```{r}
+summary(p)
+print(p)
+```
+
+```{r}
+plot(p) #Scree Plot
+PCA_Plot(p) #PCA_plot1
+PCA_Plot_Secondary(p) #PCA_Plot2
+biplot(p) #Biplot
+
+```
+
+```{r}
+rawLoadings = p$rotation %*% diag(p$sdev, nrow(p$rotation), nrow(p$rotation))
+print(rawLoadings)
+v = varimax(rawLoadings)
+```
+
+```{r}
+ls(v)
+v
+```
+
+```{r}
+p2 = psych::principal(data_pca, rotate="varimax", nfactors=4, scores=TRUE)
+print(p2$loadings, cutoff=.3, sort=T)
+```
+
+```{r}
+pca_result <- prcomp(data_pca, scale = TRUE)
+
+eigenvalues <- pca_result$sdev^2
+
+print(eigenvalues)
+```
+
+```{r}
+scores <- p2$scores
+summary(scores)
+```
+
+```{r}
+p3 <- prcomp(data_pca
+             , scale = TRUE) 
+pca_var<-fviz_pca_var(p3,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+)
+
+pca_var
+```
+
+```{r}
+p_scree <- dudi.pca(data_pca,
+               scannf = FALSE,   # Hide scree plot
+               nf = 3          # Number of components kept in the results
+)
+fviz_screeplot(p_scree, addlabels = TRUE, ylim = c(0, 35))
+
+variables2 <- get_pca_var(p_scree)
+```
+
+```{r}
+a <- fviz_contrib(p_scree, choice = "var", axes = 1, top = 10)
+a
+```
+
+```{r}
+fviz_contrib(p_scree, choice = "var", axes = 2, top = 10)
+```
+
+## CCA
+
+```{r}
+str(data_clean)
+```
+
+
+```{r}
+temp <- data_clean[c(3,5,7,9,11,13,15,17,19,21)]
+
+humidity<- data_clean[c(4,6,8,10,12,14,16,18,20,23)]
+```
+
+```{r}
+library(CCA)
+library(yacca)
+```
+
+```{r}
+c = cancor(temp,humidity)
+c
+```
+
+```{r}
+# using this code from the lab of CCA provided by the professor
+ccaWilks = function(set1, set2, cca)
+{
+  ev = ((1 - cca$cor^2))
+  ev
+  
+  n = dim(set1)[1]
+  p = length(set1)
+  q = length(set2)
+  k = min(p, q)
+  m = n - 3/2 - (p + q)/2
+  m
+  
+  w = rev(cumprod(rev(ev)))
+  
+  # initialize
+  d1 = d2 = f = vector("numeric", k)
+  
+  for (i in 1:k) 
+  {
+    s = sqrt((p^2 * q^2 - 4)/(p^2 + q^2 - 5))
+    si = 1/s
+    d1[i] = p * q
+    d2[i] = m * s - p * q/2 + 1
+    r = (1 - w[i]^si)/w[i]^si
+    f[i] = r * d2[i]/d1[i]
+    p = p - 1
+    q = q - 1
+  }
+  
+  pv = pf(f, d1, d2, lower.tail = FALSE)
+  dmat = cbind(WilksL = w, F = f, df1 = d1, df2 = d2, p = pv)
+}
+```
+
+```{r}
+wilks = ccaWilks(temp, humidity, c)
+round(wilks,2)
+```
+
+Each of the canonical correlation coefficients represents the strength of the relationship between the sets of variables, but for a different pair of linear combinations of the variables.
+```{r}
+c$cor[1:2]
+```
+
+There is a strong correlation. This means that the first linear combination from each set of variables is strongly correlated, and the second linear combination from each set of variables is also pretty strongly correlated. In other words, the temperature variables are highly related to the humidity variables.
+```{r}
+cca.fit <- cca(temp,humidity)
+helio.plot(cca.fit,x.name = "Temperature", y.name = "Humidity")
+```
+
+```{r}
+helio.plot(cca.fit,cv=2,x.name = "Temperature", y.name = "Humidity")
+```
+
